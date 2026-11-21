@@ -1,11 +1,12 @@
 # AIhistory
 
-A native macOS app (SwiftUI) for browsing your local AI coding history: **Claude Code** and **Codex**.
+A native macOS app (SwiftUI) for browsing your local AI coding history: **Claude Code**, **Codex**, and **Antigravity**.
 
 It reads:
 
 - Claude Code: `~/.claude/projects/*/*.jsonl`
 - Codex: plain `.jsonl` and compressed `.jsonl.zst` rollouts in `~/.codex/sessions/` and `archived_sessions/`, with titles from `session_index.jsonl`. Compressed history requires `zstd` (`brew install zstd`).
+- Antigravity: local conversations from `~/.gemini/antigravity*/conversations/` and the companion search index. The app reads the records in place, merges copies of the same conversation, and adds recorded subagent usage to the parent. Legacy records can appear in the history with usage unavailable.
 
 ## Features
 
@@ -29,6 +30,7 @@ It reads:
   - Summary cards: estimated cost, tokens, cache hit rate, conversation count, average per conversation / per prompt
   - Token breakdown (uncached input, cache read, cache write, output), daily chart (cost or tokens, split by Claude / Codex), tables by model and by source, top projects, most expensive conversations; 7 / 30 / 90 days / all time
   - **Claude and Codex costs use API list prices**. Claude counts each reply's `usage`, including sub-agent usage and both cache write durations. Codex counts the change in each `token_count` running total, prices applicable long-context requests at the higher rate, and folds auto-review usage into the parent conversation. Cached input is part of total input, and reasoning is part of output.
+  - **Antigravity** uses the SQLite generation records for input, cache and output tokens, prices known models at public API rates, and shows which conversations lack recorded usage. These estimates cover token charges. Antigravity quota and Google AI credits are reported by Google.
   - Prices: Settings (⌘,) → 價錢表, editable; models without a price (e.g. `codex-auto-review`) show 「未定價」 and aren't counted in the cost
   - Claude Code's own `cost-state` only covers the latest app launch (earlier usage from resumed / reopened conversations isn't included), so this app recounts from the transcripts instead
   - If you're on a subscription (Claude Pro / Max, ChatGPT Plus / Pro), the cost is only an API-equivalent estimate for comparison, not what you actually pay

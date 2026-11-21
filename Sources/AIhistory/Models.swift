@@ -5,6 +5,7 @@ import SwiftUI
 enum Agent: String, CaseIterable, Identifiable, Hashable, Sendable {
     case claude
     case codex
+    case antigravity
 
     var id: String { rawValue }
 
@@ -12,6 +13,7 @@ enum Agent: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .claude: return "Claude Code"
         case .codex: return "Codex"
+        case .antigravity: return "Antigravity"
         }
     }
 
@@ -19,6 +21,7 @@ enum Agent: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .claude: return "sparkle"
         case .codex: return "hexagon"
+        case .antigravity: return "sparkles"
         }
     }
 
@@ -26,6 +29,15 @@ enum Agent: String, CaseIterable, Identifiable, Hashable, Sendable {
         switch self {
         case .claude: return .orange
         case .codex: return .green
+        case .antigravity: return .indigo
+        }
+    }
+
+    func transcript(_ url: URL) -> [TranscriptItem] {
+        switch self {
+        case .claude: HistoryParser.transcript(url)
+        case .codex: CodexParser.transcript(url)
+        case .antigravity: AntigravityParser.transcript(url)
         }
     }
 }
@@ -42,6 +54,7 @@ enum SessionSource: String, CaseIterable, Identifiable, Hashable, Sendable {
     case codexVSCode
     case codexApp
     case codexSDK
+    case antigravityLocal
 
     var id: String { rawValue }
 
@@ -86,6 +99,7 @@ enum SessionSource: String, CaseIterable, Identifiable, Hashable, Sendable {
     var agent: Agent {
         switch self {
         case .codexCLI, .codexVSCode, .codexApp, .codexSDK: return .codex
+        case .antigravityLocal: return .antigravity
         default: return .claude
         }
     }
@@ -102,6 +116,7 @@ enum SessionSource: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .codexVSCode: return "VS Code"
         case .codexApp: return "Codex App"
         case .codexSDK: return "Codex SDK"
+        case .antigravityLocal: return "本機記錄"
         }
     }
 
@@ -117,6 +132,7 @@ enum SessionSource: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .codexVSCode: return "Codex VS Code"
         case .codexApp: return "Codex App"
         case .codexSDK: return "Codex SDK"
+        case .antigravityLocal: return Agent.antigravity.label
         }
     }
 
@@ -132,6 +148,7 @@ enum SessionSource: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .codexVSCode: return "chevron.left.forwardslash.chevron.right"
         case .codexApp: return "hexagon"
         case .codexSDK: return "shippingbox"
+        case .antigravityLocal: return Agent.antigravity.symbol
         }
     }
 
@@ -147,6 +164,7 @@ enum SessionSource: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .codexVSCode: return .cyan
         case .codexApp: return .green
         case .codexSDK: return .teal
+        case .antigravityLocal: return Agent.antigravity.color
         }
     }
 }
@@ -184,6 +202,7 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
 
     var sortDate: Date { endDate ?? modified }
     var agent: Agent { source.agent }
+    var canTrash: Bool { agent != .antigravity }
 
     var totalUsage: TokenUsage { usage.values.reduce(into: TokenUsage()) { $0 += $1 } }
 

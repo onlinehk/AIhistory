@@ -65,22 +65,27 @@ struct TranscriptView: View {
                     }
                     .disabled(attachments.isEmpty)
                     Divider()
-                    Button("喺 Finder 顯示 .jsonl") {
+                    Button("喺 Finder 顯示記錄") {
                         NSWorkspace.shared.activateFileViewerSelecting([session.fileURL])
                     }
                     Button("開啟專案資料夾") {
                         NSWorkspace.shared.open(URL(fileURLWithPath: session.projectPath))
                     }
-                    Divider()
-                    Button("移去垃圾桶…", role: .destructive, action: onDelete)
+                    .disabled(session.projectPath.isEmpty)
+                    if session.canTrash {
+                        Divider()
+                        Button("移去垃圾桶…", role: .destructive, action: onDelete)
+                    }
                 } label: {
                     Label("更多", systemImage: "ellipsis.circle")
                 }
-                Button(action: onDelete) {
-                    Label("刪除", systemImage: "trash")
+                if session.canTrash {
+                    Button(action: onDelete) {
+                        Label("刪除", systemImage: "trash")
+                    }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .help("移去垃圾桶 (⌘⌫)")
                 }
-                .keyboardShortcut(.delete, modifiers: .command)
-                .help("移去垃圾桶 (⌘⌫)")
             }
         }
         .task(id: session.modified) {
@@ -88,7 +93,7 @@ struct TranscriptView: View {
             let agent = session.agent
             let base = session.projectPath
             let loaded = await Task.detached(priority: .userInitiated) {
-                var items = agent == .codex ? CodexParser.transcript(url) : HistoryParser.transcript(url)
+                var items = agent.transcript(url)
                 LocalLinks.attachLinkedFiles(to: &items, base: base)
                 return items
             }.value
@@ -104,7 +109,7 @@ struct TranscriptView: View {
                 Text(session.title).font(.title2.weight(.semibold))
             }
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                meta("專案", session.projectPath)
+                if !session.projectPath.isEmpty { meta("專案", session.projectPath) }
                 if let branch = session.gitBranch { meta("分支", branch) }
                 if let start = session.startDate {
                     let range = session.endDate.map { end in
@@ -112,6 +117,8 @@ struct TranscriptView: View {
                         return "\(start.formatted(date: .abbreviated, time: .shortened)) → \(end.formatted(date: sameDay ? .omitted : .abbreviated, time: .shortened))"
                     }
                     meta("時間", range ?? start.formatted())
+                } else if let end = session.endDate {
+                    meta("時間", end.formatted())
                 }
                 meta("來源", "\(session.agent.label) · \(session.source.label)" + (session.rawEntrypoint.map { "  (\($0))" } ?? ""))
                 if let model = session.model { meta("模型", model) }
@@ -127,6 +134,7 @@ struct TranscriptView: View {
                             .joined(separator: "、") + "）" : "")
                          + (unpriced.isEmpty || session.usageByModel.count > 1 ? "" : "（\(unpriced.joined(separator: "、")) 未定價）"))
                 }
+                if session.agent == .antigravity && usage.isEmpty { meta("Tokens", "本機記錄未有用量") }
                 if let v = session.version { meta("版本", "\(session.agent.label) \(v)") }
                 meta("Session", session.sessionId)
             }
@@ -146,7 +154,7 @@ struct TranscriptView: View {
         for item in items {
             switch item.kind {
             case .user: out += "## 🧑 User\n\n\(item.text)\n\n"
-            case .assistant: out += "## 🤖 \(session.agent == .codex ? "Codex" : "Claude")\n\n\(item.text)\n\n"
+            case .assistant: out += "## 🤖 \(session.agent == .claude ? "Claude" : session.agent.label)\n\n\(item.text)\n\n"
             case .tool: out += "> 🔧 \(item.title ?? "") \(item.text)\n\n"
             case .system: out += "> \(item.text)\n\n"
             case .thinking: break

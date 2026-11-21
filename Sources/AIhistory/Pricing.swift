@@ -19,6 +19,11 @@ struct ModelPrice: Codable, Hashable, Sendable {
         ModelPrice(input: input, cacheRead: cached, cacheWrite5m: input, cacheWrite1h: input, output: output)
     }
 
+    /// Gemini token prices. Time-based cache storage fees need data beyond the transcript.
+    static func gemini(_ input: Double, _ output: Double, cached: Double) -> ModelPrice {
+        ModelPrice(input: input, cacheRead: cached, cacheWrite5m: input, cacheWrite1h: input, output: output)
+    }
+
     func cost(_ u: TokenUsage) -> Double {
         (Double(u.input) * input
             + Double(u.cacheRead) * cacheRead
@@ -44,7 +49,7 @@ struct ModelPrice: Codable, Hashable, Sendable {
 final class PriceBook {
     static let shared = PriceBook()
 
-    /// Anthropic and OpenAI API list prices. GPT-6.2 rates verified in November 2026.
+    /// Standard API token prices from Anthropic, OpenAI and Google.
     static let defaults: [String: ModelPrice] = [
         "claude-fable-5-1": .anthropic(10, 50, cacheRead: 0.25),
         "claude-mythos-5-1": .anthropic(10, 50, cacheRead: 0.25),
@@ -80,11 +85,26 @@ final class PriceBook {
         "gpt-5": .openAI(1.25, 10, cached: 0.125),
         "gpt-5-mini": .openAI(0.25, 2, cached: 0.025),
         "gpt-5-nano": .openAI(0.05, 0.40, cached: 0.005),
+
+        "gemini-4-argon": .gemini(2, 10, cached: 0.10),
+        "gemini-4-hydrogen": .gemini(1.50, 7.50, cached: 0.075),
+        "gemini-3.8-flash": .gemini(0.75, 3.75, cached: 0.075),
+        "gemini-3.7-flash": .gemini(0.75, 3.75, cached: 0.075),
+        "gemini-3.6-flash": .gemini(0.75, 3.75, cached: 0.075),
+        "gemini-3.5-flash": .gemini(1.50, 9, cached: 0.15),
+        "gemini-3.1-pro": .gemini(2, 12, cached: 0.20),
     ]
 
     private static let storageKey = "priceOverrides"
     private static let modelsWithLongContextPricing = [
         "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol",
+        "gemini-3.1-pro",
+    ]
+    private static let geminiPricingChanges = [
+        "gemini-4-argon": "2026-12-01",
+        "gemini-3.8-flash": "2027-01-01",
+        "gemini-3.7-flash": "2027-01-01",
+        "gemini-3.6-flash": "2027-01-01",
     ]
 
     private(set) var overrides: [String: ModelPrice] = [:]
@@ -131,9 +151,13 @@ final class PriceBook {
 
     /// nil when the model has no price.
     func cost(_ usage: TokenUsage, key: UsageKey) -> Double? {
-        guard let price = price(for: key.model) else { return nil }
+        guard var price = price(for: key.model) else { return nil }
+        let name = Self.baseModel(key.model).name
+        if let change = Self.geminiPricingChanges[name], key.day != "unknown", key.day >= change,
+           overrides[key.model] == nil, overrides[name] == nil {
+            price = price.scaled(2)
+        }
         if key.longContext {
-            let name = Self.baseModel(key.model).name
             if Self.modelsWithLongContextPricing.contains(where: { name == $0 || name.hasPrefix($0 + "-") }) {
                 return price.longContextPrice.cost(usage)
             }

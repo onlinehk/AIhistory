@@ -30,13 +30,14 @@ final class HistoryStore {
                 results[i].title = names[results[i].sessionId] ?? CodexParser.fallbackTitle(results[i].firstPrompt)
             }
             let indexed = results
+            let antigravity = AntigravityParser.summaries()
             await MainActor.run {
                 // Drop anything trashed while this reload was running.
                 let existing = indexed.filter { FileManager.default.fileExists(atPath: $0.fileURL.path) }
                 self.cache = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
                 let folded = Self.foldCodexRollouts(existing)
                 self.relatedRollouts = folded.files
-                self.sessions = folded.sessions.sorted { $0.sortDate > $1.sortDate }
+                self.sessions = (folded.sessions + antigravity).sorted { $0.sortDate > $1.sortDate }
                 self.codexNeedsZstd = codexNeedsZstd
                 PriceBook.shared.seenModels = Set(self.sessions.flatMap { $0.usage.keys.map(\.model) })
                 self.isLoading = false
@@ -105,7 +106,7 @@ final class HistoryStore {
         var failures: [(SessionSummary, Error)] = []
         var removed = Set<String>()
 
-        for s in targets {
+        for s in targets where s.canTrash {
             do {
                 try fm.trashItem(at: s.fileURL, resultingItemURL: nil)
                 removed.insert(s.id)

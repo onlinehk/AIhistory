@@ -10,7 +10,12 @@ struct SidebarView: View {
 
     /// Always show each agent's main clients; show the rest only when they have sessions.
     private func sources(for agent: Agent) -> [SessionSource] {
-        let main: [SessionSource] = agent == .claude ? [.cli, .vscode, .desktop] : [.codexCLI, .codexVSCode, .codexApp]
+        let main: [SessionSource]
+        switch agent {
+        case .claude: main = [.cli, .vscode, .desktop]
+        case .codex: main = [.codexCLI, .codexVSCode, .codexApp]
+        case .antigravity: return []
+        }
         return SessionSource.allCases.filter { s in
             s.agent == agent && (main.contains(s) || store.count(for: .source(s)) > 0)
         }
@@ -25,6 +30,7 @@ struct SidebarView: View {
 
             agentSection(.claude)
             agentSection(.codex)
+            agentSection(.antigravity)
 
             Section("統計") {
                 let prices = PriceBook.shared
@@ -41,8 +47,14 @@ struct SidebarView: View {
                         if agent == .codex && store.codexNeedsZstd {
                             Text("壓縮記錄未讀取，需要 zstd").font(.caption2).foregroundStyle(.orange)
                         }
-                        if agent == .codex && hasUnpricedModel {
+                        if agent != .claude && hasUnpricedModel {
                             Text("部分用量未定價").font(.caption2).foregroundStyle(.orange)
+                        }
+                        if agent == .antigravity {
+                            let withoutUsage = list.filter { $0.usage.isEmpty }.count
+                            if withoutUsage > 0 {
+                                Text("\(withoutUsage) 個對話未有用量記錄").font(.caption2).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }

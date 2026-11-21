@@ -67,9 +67,12 @@ struct SessionListView: View {
         }
         if !targets.isEmpty {
             Button("喺 Finder 顯示") { NSWorkspace.shared.activateFileViewerSelecting(targets.map(\.fileURL)) }
+        }
+        let deletable = targets.filter(\.canTrash)
+        if !deletable.isEmpty {
             Divider()
-            Button(targets.count == 1 ? "移去垃圾桶…" : "將 \(targets.count) 個對話移去垃圾桶…", role: .destructive) {
-                onDelete(targets)
+            Button(deletable.count == 1 ? "移去垃圾桶…" : "將 \(deletable.count) 個對話移去垃圾桶…", role: .destructive) {
+                onDelete(deletable)
             }
         }
     }
@@ -167,8 +170,13 @@ enum Clipboard {
 
 extension SessionSummary {
     var resumeCommand: String {
-        let resume = agent == .codex ? "codex resume \(sessionId)" : "claude --resume \(sessionId)"
-        return "cd \(shellQuote(projectPath)) && \(resume)"
+        let resume: String
+        switch agent {
+        case .claude: resume = "claude --resume \(sessionId)"
+        case .codex: resume = "codex resume \(sessionId)"
+        case .antigravity: resume = "agy --conversation \(sessionId)"
+        }
+        return projectPath.isEmpty ? resume : "cd \(shellQuote(projectPath)) && \(resume)"
     }
 
     private func shellQuote(_ s: String) -> String {

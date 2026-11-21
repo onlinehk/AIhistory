@@ -9,8 +9,9 @@ enum Entry {
         if CommandLine.arguments.contains("--dump") {
             let claude = HistoryParser.sessionFiles().compactMap(HistoryParser.summarize)
             let codex = CodexParser.sessionFiles().compactMap(CodexParser.summarize)
-            for s in (claude + codex).sorted(by: { $0.sortDate > $1.sortDate }) {
-                let items = s.agent == .codex ? CodexParser.transcript(s.fileURL) : HistoryParser.transcript(s.fileURL)
+            let antigravity = AntigravityParser.summaries()
+            for s in (claude + codex + antigravity).sorted(by: { $0.sortDate > $1.sortDate }) {
+                let items = s.agent.transcript(s.fileURL)
                 print("[\(s.source.shortLabel)] \(s.projectName) | \(s.title) | prompts=\(s.promptCount) items=\(items.count) attachments=\(items.reduce(0) { $0 + $1.attachments.count }) missing=\(items.reduce(0) { $0 + $1.imageCount })")
             }
             return
@@ -21,6 +22,7 @@ enum Entry {
                 let prices = PriceBook.shared
                 let all = HistoryParser.sessionFiles().compactMap(HistoryParser.summarize)
                     + CodexParser.sessionFiles().compactMap(CodexParser.summarize)
+                    + AntigravityParser.summaries()
                 for s in all {
                     let u = s.totalUsage
                     print("\(s.agent.rawValue)\t\(s.isSubagent ? "sub" : "main")\t\(s.sessionId)\t\(String(format: "%.4f", prices.cost(of: s)))\t\(u.input)\t\(u.cacheRead)\t\(u.cacheWrite5m)\t\(u.cacheWrite1h)\t\(u.output)\t\(prices.unpricedModels(in: s).joined(separator: ","))")
@@ -128,7 +130,7 @@ struct ContentView: View {
     }
 
     private func requestDelete(_ sessions: [SessionSummary]) {
-        if !sessions.isEmpty { pendingDelete = sessions }
+        pendingDelete = sessions.filter(\.canTrash)
     }
 
     private func performDelete() {
@@ -177,10 +179,12 @@ struct ContentView: View {
                 ContentUnavailableView {
                     Label("已揀 \(selected.count) 個對話", systemImage: "square.stack")
                 } actions: {
-                    Button(role: .destructive) {
-                        requestDelete(selected)
-                    } label: {
-                        Label("移去垃圾桶", systemImage: "trash")
+                    if selected.contains(where: \.canTrash) {
+                        Button(role: .destructive) {
+                            requestDelete(selected)
+                        } label: {
+                            Label("移去垃圾桶", systemImage: "trash")
+                        }
                     }
                 }
             } else {
@@ -214,7 +218,7 @@ struct ContentView: View {
                     }
                 }
                 .keyboardShortcut("r", modifiers: .command)
-                .help("重新讀取 Claude Code 同 Codex 記錄 (⌘R)")
+                .help("重新讀取本機對話記錄 (⌘R)")
             }
         }
         .confirmationDialog(

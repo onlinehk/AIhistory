@@ -42,7 +42,7 @@ struct DailyPoint: Identifiable {
     var tokens: Int
 }
 
-/// Totals for a set of sessions within a date range, priced with one table for both agents.
+/// Totals for a set of sessions within a date range, priced with one table.
 struct StatsData {
     var sessionCount = 0
     var promptCount = 0
@@ -54,6 +54,7 @@ struct StatsData {
     var topSessions: [(session: SessionSummary, cost: Double, usage: TokenUsage)] = []
     var daily: [DailyPoint] = []
     var unpricedModels: [String] = []
+    var antigravityWithoutUsage = 0
 
     @MainActor
     init(sessions: [SessionSummary], prices: PriceBook, range: StatsRange) {
@@ -78,13 +79,14 @@ struct StatsData {
                 sessionUsage += u
                 sessionCost += c ?? 0
 
-                var row = models[key.model] ?? UsageRow(id: key.model, label: key.model, color: s.agent.color)
+                let modelID = "\(s.agent.rawValue):\(key.model)"
+                var row = models[modelID] ?? UsageRow(id: modelID, label: key.model, color: s.agent.color)
                 row.usage += u
                 row.cost += c ?? 0
                 row.unpriced = c == nil
                 row.detail = s.agent.label
-                models[key.model] = row
-                modelSessions[key.model, default: []].insert(s.id)
+                models[modelID] = row
+                modelSessions[modelID, default: []].insert(s.id)
 
                 if let date = UsageKey.date(forDay: key.day) {
                     let dk = "\(key.day)-\(s.agent.rawValue)"
@@ -96,6 +98,7 @@ struct StatsData {
             }
 
             sessionCount += 1
+            if s.agent == .antigravity && s.usage.isEmpty { antigravityWithoutUsage += 1 }
             promptCount += s.promptCount
             usage += sessionUsage
             cost += sessionCost
@@ -278,7 +281,7 @@ struct StatsDashboard: View {
                     )
                     .foregroundStyle(by: .value("Agent", p.agent.label))
                 }
-                .chartForegroundStyleScale(["Claude Code": Agent.claude.color, "Codex": Agent.codex.color])
+                .chartForegroundStyleScale(domain: Agent.allCases.map(\.label), range: Agent.allCases.map(\.color))
                 .chartYAxis {
                     AxisMarks { value in
                         AxisGridLine()
@@ -387,6 +390,10 @@ struct StatsDashboard: View {
 
     private func footnote(_ d: StatsData) -> some View {
         VStack(alignment: .leading, spacing: 6) {
+            if d.antigravityWithoutUsage > 0 {
+                Text("Antigravity 有 \(d.antigravityWithoutUsage) 個對話未有本機用量記錄。")
+                    .foregroundStyle(.secondary)
+            }
             if !d.unpricedModels.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
