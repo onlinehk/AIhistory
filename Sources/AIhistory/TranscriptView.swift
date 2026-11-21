@@ -120,9 +120,10 @@ struct TranscriptView: View {
                     meta("Tokens", "\(Fmt.tokens(usage.total))（輸入 \(Fmt.tokens(usage.input)) · cache 讀 \(Fmt.tokens(usage.cacheRead)) · cache 寫 \(Fmt.tokens(usage.cacheWrite)) · 輸出 \(Fmt.tokens(usage.output))）")
                     let prices = PriceBook.shared
                     let unpriced = prices.unpricedModels(in: session)
+                    let modelCosts = prices.costByModel(in: session)
                     meta("估算費用", Fmt.usd(prices.cost(of: session))
                          + (session.usageByModel.count > 1 ? "（" + session.usageByModel.sorted { $0.value.total > $1.value.total }
-                            .map { "\($0.key) \(prices.cost($0.value, model: $0.key).map(Fmt.usd) ?? "未定價")" }
+                            .map { "\($0.key) \(modelCosts[$0.key].map(Fmt.usd) ?? "未定價")" }
                             .joined(separator: "、") + "）" : "")
                          + (unpriced.isEmpty || session.usageByModel.count > 1 ? "" : "（\(unpriced.joined(separator: "、")) 未定價）"))
                 }

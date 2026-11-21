@@ -31,6 +31,11 @@ struct ModelPrice: Codable, Hashable, Sendable {
         ModelPrice(input: input * factor, cacheRead: cacheRead * factor, cacheWrite5m: cacheWrite5m * factor,
                    cacheWrite1h: cacheWrite1h * factor, output: output * factor)
     }
+
+    var longContextPrice: ModelPrice {
+        ModelPrice(input: input * 2, cacheRead: cacheRead * 2, cacheWrite5m: cacheWrite5m * 2,
+                   cacheWrite1h: cacheWrite1h * 2, output: output * 1.5)
+    }
 }
 
 /// Standard API list prices (short-context tier). Edited prices are stored on top of these.
@@ -39,7 +44,7 @@ struct ModelPrice: Codable, Hashable, Sendable {
 final class PriceBook {
     static let shared = PriceBook()
 
-    /// Anthropic and OpenAI pricing pages as of 2026-10.
+    /// Anthropic and OpenAI API list prices. GPT-6.2 rates verified in November 2026.
     static let defaults: [String: ModelPrice] = [
         "claude-fable-5-1": .anthropic(10, 50, cacheRead: 0.25),
         "claude-mythos-5-1": .anthropic(10, 50, cacheRead: 0.25),
@@ -57,6 +62,8 @@ final class PriceBook {
         "claude-haiku-5-5": .anthropic(0.10, 0.50, cacheRead: 0.01),
         "claude-haiku-4-5": .anthropic(1, 5, cacheRead: 0.10),
 
+        "gpt-6.2-astra": .openAI(8, 40, cached: 0.40),
+        "gpt-6.2-sol": .openAI(2, 10, cached: 0.10),
         "gpt-6.1-sol": .openAI(2, 10, cached: 0.10),
         "gpt-6-astra": .openAI(10, 50, cached: 1),
         "gpt-6-sol": .openAI(2, 10, cached: 0.20),
@@ -76,6 +83,9 @@ final class PriceBook {
     ]
 
     private static let storageKey = "priceOverrides"
+    private static let modelsWithLongContextPricing = [
+        "gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol",
+    ]
 
     private(set) var overrides: [String: ModelPrice] = [:]
     /// Models that appear in the history, so the price editor can list unpriced ones.
@@ -120,12 +130,27 @@ final class PriceBook {
     func isCustom(_ model: String) -> Bool { overrides[model] != nil }
 
     /// nil when the model has no price.
-    func cost(_ usage: TokenUsage, model: String) -> Double? {
-        price(for: model)?.cost(usage)
+    func cost(_ usage: TokenUsage, key: UsageKey) -> Double? {
+        guard let price = price(for: key.model) else { return nil }
+        if key.longContext {
+            let name = Self.baseModel(key.model).name
+            if Self.modelsWithLongContextPricing.contains(where: { name == $0 || name.hasPrefix($0 + "-") }) {
+                return price.longContextPrice.cost(usage)
+            }
+        }
+        return price.cost(usage)
     }
 
     func cost(of session: SessionSummary) -> Double {
-        session.usageByModel.reduce(0) { $0 + (cost($1.value, model: $1.key) ?? 0) }
+        session.usage.reduce(0) { $0 + (cost($1.value, key: $1.key) ?? 0) }
+    }
+
+    func costByModel(in session: SessionSummary) -> [String: Double] {
+        session.usage.reduce(into: [:]) { costs, entry in
+            if let cost = cost(entry.value, key: entry.key) {
+                costs[entry.key.model, default: 0] += cost
+            }
+        }
     }
 
     func unpricedModels(in session: SessionSummary) -> [String] {

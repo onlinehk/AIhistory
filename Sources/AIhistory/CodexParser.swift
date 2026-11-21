@@ -1,6 +1,6 @@
 import Foundation
 
-/// Reads Codex rollouts: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (and `archived_sessions/`).
+/// Reads plain and Zstandard-compressed Codex rollouts in `sessions/` and `archived_sessions/`.
 enum CodexParser {
     /// `~/.codex`, or `$CODEX_HOME` when set.
     static var root: URL {
@@ -11,15 +11,69 @@ enum CodexParser {
     }
 
     static func sessionFiles() -> [URL] {
-        var result: [URL] = []
+        var byPath: [URL: URL] = [:]
         for sub in ["sessions", "archived_sessions"] {
             let dir = root.appendingPathComponent(sub)
-            guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil) else { continue }
-            for case let url as URL in e where url.pathExtension == "jsonl" && url.lastPathComponent.hasPrefix("rollout-") {
-                result.append(url)
+            guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey]) else { continue }
+            for case let url as URL in e where url.lastPathComponent.hasPrefix("rollout-") {
+                let compressed = url.pathExtension == "zst"
+                let plain = compressed ? url.deletingPathExtension() : url
+                guard plain.pathExtension == "jsonl",
+                      (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+                if !compressed || byPath[plain] == nil { byPath[plain] = url }
             }
         }
-        return result
+        return Array(byPath.values)
+    }
+
+    private static var zstd: URL? {
+        // A Finder-launched app usually doesn't inherit the Homebrew PATH.
+        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin"] + path.split(separator: ":").map(String.init)
+        return dirs.lazy.filter { $0.hasPrefix("/") }
+            .map { URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent("zstd") }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    static var canReadCompressedRollouts: Bool { zstd != nil }
+
+    private static func forEachRecord(in url: URL, _ body: ([String: Any]) -> Void) -> Bool {
+        guard url.pathExtension == "zst" else {
+            HistoryParser.forEachRecord(in: url, body)
+            return true
+        }
+        guard let zstd else { return false }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = zstd
+        process.arguments = ["-qdc", "--", url.path]
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return false }
+
+        let reader = output.fileHandleForReading
+        defer { try? reader.close() }
+        var partial = Data()
+        do {
+            while let chunk = try reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                if let newline = chunk.lastIndex(of: 0x0A) {
+                    partial.append(chunk[...newline])
+                    HistoryParser.forEachRecord(in: partial, body)
+                    partial = Data(chunk[(newline + 1)...])
+                } else {
+                    partial.append(chunk)
+                }
+            }
+        } catch {
+            try? reader.close()
+            process.waitUntilExit()
+            return false
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return false }
+        HistoryParser.forEachRecord(in: partial, body)
+        return true
     }
 
     /// Thread names from `session_index.jsonl` (later lines win).
@@ -75,9 +129,18 @@ enum CodexParser {
         var imageURLs: [String] = []
         /// Pasted images Codex saved to a temp path.
         var localImages: [String] = []
+
+        var hasContent: Bool { !text.isEmpty || !imageURLs.isEmpty || !localImages.isEmpty || !files.isEmpty }
     }
 
-    private static func userMessage(_ item: [String: Any]) -> UserMessage {
+    private static func userMessage(_ event: [String: Any]) -> UserMessage? {
+        if (event["type"] as? String) == "user_message", let message = event["message"] as? String {
+            let cleaned = cleanUserText(message)
+            return UserMessage(text: cleaned.text, context: cleaned.context, files: cleaned.files,
+                               imageURLs: event["images"] as? [String] ?? [], localImages: event["local_images"] as? [String] ?? [])
+        }
+        guard (event["type"] as? String) == "item_completed",
+              let item = event["item"] as? [String: Any], (item["type"] as? String) == "UserMessage" else { return nil }
         var parts: [String] = []
         var urls: [String] = []
         var locals: [String] = []
@@ -112,7 +175,7 @@ enum CodexParser {
         var lastTotal: [String: Int]?
         var searchBudget = 20_000
 
-        HistoryParser.forEachRecord(in: url) { rec in
+        let read = forEachRecord(in: url) { rec in
             let payload = rec["payload"] as? [String: Any] ?? [:]
             switch rec["type"] as? String {
             case "session_meta":
@@ -154,14 +217,13 @@ enum CodexParser {
                 u.reasoning = delta["reasoning_output_tokens"]!
                 guard !u.isEmpty else { return }
                 let day = HistoryParser.date(rec["timestamp"]).map(UsageKey.day(for:)) ?? "unknown"
-                usage[UsageKey(day: day, model: model ?? "unknown"), default: TokenUsage()] += u
-            case "item_completed":
-                guard let item = payload["item"] as? [String: Any], (item["type"] as? String) == "UserMessage" else { return }
-                let msg = userMessage(item)
-                guard !msg.text.isEmpty else { return }
+                let longContext = delta["input_tokens"]! > 272_000
+                usage[UsageKey(day: day, model: model ?? "unknown", longContext: longContext), default: TokenUsage()] += u
+            case "item_completed", "user_message":
+                guard let msg = userMessage(payload), msg.hasContent else { return }
                 promptCount += 1
-                if firstPrompt == nil { firstPrompt = msg.text }
-                if searchBudget > 0 {
+                if firstPrompt == nil, !msg.text.isEmpty { firstPrompt = msg.text }
+                if searchBudget > 0, !msg.text.isEmpty {
                     let piece = String(msg.text.prefix(searchBudget))
                     prompts.append(piece)
                     searchBudget -= piece.count
@@ -171,11 +233,12 @@ enum CodexParser {
             }
         }
 
-        guard let meta else { return nil }
+        guard read, let meta else { return nil }
         let subagent = isSubagent(meta)
         guard subagent || promptCount > 0 else { return nil }
 
-        let id = meta["id"] as? String ?? url.deletingPathExtension().lastPathComponent
+        let plain = url.pathExtension == "zst" ? url.deletingPathExtension() : url
+        let id = meta["id"] as? String ?? plain.deletingPathExtension().lastPathComponent
         let project = meta["cwd"] as? String ?? ""
         let first = firstPrompt ?? ""
         let git = meta["git"] as? [String: Any]
@@ -224,16 +287,14 @@ enum CodexParser {
         /// (`<image name=[Image #1] path="…">` followed by an `input_image`).
         var pastedImages: [String: String] = [:]
 
-        HistoryParser.forEachRecord(in: url) { rec in
+        let read = forEachRecord(in: url) { rec in
             let payload = rec["payload"] as? [String: Any] ?? [:]
             let ts = HistoryParser.date(rec["timestamp"])
             let ptype = payload["type"] as? String
 
             switch rec["type"] as? String {
             case "event_msg":
-                if ptype == "item_completed",
-                   let item = payload["item"] as? [String: Any], (item["type"] as? String) == "UserMessage" {
-                    let msg = userMessage(item)
+                if let msg = userMessage(payload) {
                     var attachments: [Attachment] = []
                     var missing = 0
                     for url in msg.imageURLs {
@@ -326,7 +387,7 @@ enum CodexParser {
                 break
             }
         }
-        return items
+        return read ? items : []
     }
 
     private static func toolCall(_ p: [String: Any], type: String) -> (name: String, summary: String, input: String) {

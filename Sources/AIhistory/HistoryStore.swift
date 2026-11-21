@@ -7,19 +7,22 @@ final class HistoryStore {
     private(set) var sessions: [SessionSummary] = []
     private(set) var isLoading = false
     private(set) var lastLoaded: Date?
+    private(set) var codexNeedsZstd = false
 
     /// Summaries keyed by path, reused while the file's size and mtime are unchanged.
     @ObservationIgnored private var cache: [String: SessionSummary] = [:]
-    /// Codex sub-agent rollouts per parent session id (their usage is folded into the parent).
-    @ObservationIgnored private var subagentFiles: [String: [URL]] = [:]
+    /// Codex sub-agent and superseded rollouts per visible thread.
+    @ObservationIgnored private var relatedRollouts: [String: [URL]] = [:]
 
     func reload() {
         guard !isLoading else { return }
         isLoading = true
         let cache = self.cache
         Task.detached(priority: .userInitiated) {
+            let codexFiles = CodexParser.sessionFiles()
+            let codexNeedsZstd = codexFiles.contains { $0.pathExtension == "zst" } && !CodexParser.canReadCompressedRollouts
             let files = HistoryParser.sessionFiles().map { ($0, Agent.claude) }
-                + CodexParser.sessionFiles().map { ($0, Agent.codex) }
+                + codexFiles.map { ($0, Agent.codex) }
             var results = Self.index(files: files, cache: cache)
             // Codex keeps thread names in a separate index that changes without touching the rollout.
             let names = CodexParser.threadNames()
@@ -31,9 +34,10 @@ final class HistoryStore {
                 // Drop anything trashed while this reload was running.
                 let existing = indexed.filter { FileManager.default.fileExists(atPath: $0.fileURL.path) }
                 self.cache = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
-                let folded = Self.foldSubagents(existing)
-                self.subagentFiles = folded.files
+                let folded = Self.foldCodexRollouts(existing)
+                self.relatedRollouts = folded.files
                 self.sessions = folded.sessions.sorted { $0.sortDate > $1.sortDate }
+                self.codexNeedsZstd = codexNeedsZstd
                 PriceBook.shared.seenModels = Set(self.sessions.flatMap { $0.usage.keys.map(\.model) })
                 self.isLoading = false
                 self.lastLoaded = Date()
@@ -41,18 +45,32 @@ final class HistoryStore {
         }
     }
 
-    /// Adds each sub-agent thread's usage to its parent and drops it from the list.
-    nonisolated private static func foldSubagents(_ all: [SessionSummary]) -> (sessions: [SessionSummary], files: [String: [URL]]) {
-        var listed = all.filter { !$0.isSubagent }
-        var index: [String: Int] = [:]
-        for (i, s) in listed.enumerated() where index[s.sessionId] == nil { index[s.sessionId] = i }
+    /// Uses the current rollout of each Codex thread and folds descendants into their visible ancestor.
+    nonisolated private static func foldCodexRollouts(_ all: [SessionSummary]) -> (sessions: [SessionSummary], files: [String: [URL]]) {
+        // A revert creates a newer timestamped rollout while keeping the same thread id.
+        let rollouts = Dictionary(grouping: all.filter { $0.agent == .codex }, by: \.sessionId)
+            .mapValues { versions in
+                versions.sorted { ($0.fileURL.lastPathComponent, $0.modified, $0.id) > ($1.fileURL.lastPathComponent, $1.modified, $1.id) }
+            }
+        let current = rollouts.compactMapValues(\.first)
+        var listed = current.values.filter { !$0.isSubagent }
+        let index = Dictionary(uniqueKeysWithValues: listed.enumerated().map { ($0.element.sessionId, $0.offset) })
         var files: [String: [URL]] = [:]
-        for sub in all where sub.isSubagent {
-            guard let parent = sub.parentSessionId, let i = index[parent] else { continue }
-            for (key, u) in sub.usage { listed[i].usage[key, default: TokenUsage()] += u }
-            files[parent, default: []].append(sub.fileURL)
+        for (thread, versions) in rollouts {
+            guard let latest = versions.first else { continue }
+            var root = thread
+            var visited = Set<String>()
+            while visited.insert(root).inserted, let parent = current[root]?.parentSessionId {
+                root = parent
+            }
+            guard let i = index[root] else { continue }
+            if latest.isSubagent {
+                for (key, usage) in latest.usage { listed[i].usage[key, default: TokenUsage()] += usage }
+                files[root, default: []].append(latest.fileURL)
+            }
+            files[root, default: []].append(contentsOf: versions.dropFirst().map(\.fileURL))
         }
-        return (listed, files)
+        return (listed + all.filter { $0.agent == .claude }, files)
     }
 
     nonisolated private static func index(files: [(URL, Agent)], cache: [String: SessionSummary]) -> [SessionSummary] {
@@ -95,13 +113,12 @@ final class HistoryStore {
                 failures.append((s, error))
                 continue
             }
-            // Codex keeps a thread in its rollout, plus one rollout per auto-review sub-agent.
             guard s.agent == .claude else {
-                for url in subagentFiles[s.sessionId] ?? [] {
+                for url in relatedRollouts[s.sessionId] ?? [] {
                     try? fm.trashItem(at: url, resultingItemURL: nil)
                     cache[url.path] = nil
                 }
-                subagentFiles[s.sessionId] = nil
+                relatedRollouts[s.sessionId] = nil
                 continue
             }
             // Side data; best effort once the transcript itself is gone.

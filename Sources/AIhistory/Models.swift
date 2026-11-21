@@ -167,7 +167,7 @@ struct SessionSummary: Identifiable, Hashable, Sendable {
     let gitBranch: String?
     let version: String?
     let model: String?
-    /// Tokens per (local day, model), including sub-agent work.
+    /// Tokens by local day, model and context length, including sub-agent work.
     var usage: [UsageKey: TokenUsage] = [:]
     /// Codex auto-review / sub-agent threads are folded into their parent and not listed.
     var isSubagent = false
@@ -225,6 +225,7 @@ struct UsageKey: Hashable, Sendable {
     /// Local calendar day, "yyyy-MM-dd".
     let day: String
     let model: String
+    var longContext = false
 
     static func day(for date: Date) -> String {
         let c = Calendar.current.dateComponents([.year, .month, .day], from: date)

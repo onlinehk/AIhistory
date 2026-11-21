@@ -30,6 +30,10 @@ enum HistoryParser {
 
     static func forEachRecord(in url: URL, _ body: ([String: Any]) -> Void) {
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return }
+        forEachRecord(in: data, body)
+    }
+
+    static func forEachRecord(in data: Data, _ body: ([String: Any]) -> Void) {
         var start = data.startIndex
         let end = data.endIndex
         while start < end {

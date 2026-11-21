@@ -47,6 +47,7 @@ private func migrateSettingsFromOldName() {
 
 struct AIhistoryApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage("settingsTab") private var settingsTab = SettingsTab.prices
 
     var body: some Scene {
         WindowGroup("AIhistory") {
@@ -59,11 +60,41 @@ struct AIhistoryApp: App {
             CommandGroup(replacing: .newItem) {}
         }
 
+        Window("OpenRouter 統計與計費", id: OpenRouterDetailView.windowID) {
+            OpenRouterDetailView()
+                .frame(minWidth: 780, minHeight: 500)
+        }
+        .defaultSize(width: 1060, height: 760)
+
         Settings {
-            TabView {
+            TabView(selection: $settingsTab) {
                 PriceSettingsView()
                     .tabItem { Label("價錢表", systemImage: "dollarsign.circle") }
+                    .tag(SettingsTab.prices)
+                OpenRouterSettingsView()
+                    .tabItem { Label("OpenRouter", systemImage: "network") }
+                    .tag(SettingsTab.openRouter)
             }
+        }
+    }
+}
+
+enum SettingsTab: String {
+    case prices, openRouter
+}
+
+struct AppSettingsLink<Label: View>: View {
+    let tab: SettingsTab
+    @ViewBuilder let label: () -> Label
+    @AppStorage("settingsTab") private var settingsTab = SettingsTab.prices
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Button {
+            settingsTab = tab
+            openSettings()
+        } label: {
+            label()
         }
     }
 }
@@ -156,6 +187,7 @@ struct ContentView: View {
                 StatsDashboard(
                     title: (filter ?? .all).title + (project.map { " · \(($0 as NSString).lastPathComponent)" } ?? "")
                         + (query.isEmpty ? "" : " · 搜尋「\(query)」"),
+                    source: filter ?? .all,
                     sessions: visibleSessions,
                     onSelect: { selection = [$0.id] }
                 )
@@ -182,7 +214,7 @@ struct ContentView: View {
                     }
                 }
                 .keyboardShortcut("r", modifiers: .command)
-                .help("重新讀取 ~/.claude/projects (⌘R)")
+                .help("重新讀取 Claude Code 同 Codex 記錄 (⌘R)")
             }
         }
         .confirmationDialog(

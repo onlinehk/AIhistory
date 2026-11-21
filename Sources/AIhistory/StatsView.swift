@@ -73,7 +73,7 @@ struct StatsData {
             var sessionUsage = TokenUsage()
             var sessionCost = 0.0
             for (key, u) in entries {
-                let c = prices.cost(u, model: key.model)
+                let c = prices.cost(u, key: key)
                 if c == nil { unpriced.insert(key.model) }
                 sessionUsage += u
                 sessionCost += c ?? 0
@@ -141,6 +141,7 @@ enum Fmt {
 
 struct StatsDashboard: View {
     let title: String
+    let source: SourceFilter
     let sessions: [SessionSummary]
     let onSelect: (SessionSummary) -> Void
 
@@ -160,6 +161,8 @@ struct StatsDashboard: View {
                 table(title: "按來源", rows: data.bySource, showSessions: true)
                 projects(data)
                 topSessions(data)
+                Divider()
+                OpenRouterSection(range: range, allSources: source == .all)
                 footnote(data)
             }
             .padding(24)
@@ -388,10 +391,10 @@ struct StatsDashboard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                     Text("未有價錢、冇計入費用：\(d.unpricedModels.joined(separator: "、"))")
-                    SettingsLink { Text("設定價錢…") }
+                    AppSettingsLink(tab: .prices) { Text("設定價錢…") }
                 }
             }
-            Text("費用 = 每個模型嘅 token × API 牌價（Claude 同 Codex 用同一套計法：冇 cache 嘅輸入、cache 讀取、cache 寫入、輸出分開計）。如果你用 Claude Pro / Max 或者 ChatGPT Plus / Pro 訂閱，實際收費唔係咁計，呢個數只係 API 等價，方便比較。可以喺「設定」(⌘,) 改價錢。")
+            Text("費用按本機記錄同 API 牌價估算。輸入、cache 讀寫同輸出分開計，適用嘅 Codex 請求會按長 context 牌價計。訂閱用量同 credits 以各平台嘅用量頁為準。可以喺「設定」(⌘,) 改價錢。")
                 .foregroundStyle(.secondary)
         }
         .font(.caption)
