@@ -31,7 +31,7 @@ enum AntigravityParser {
                 """) { row in
                 guard let id = row.text(0), index[id] == nil else { return }
                 let workspaces = row.text(3).flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) }
-                index[id] = ConversationInfo(title: nonempty(row.text(1)), preview: nonempty(row.text(2)),
+                index[id] = ConversationInfo(title: nonempty(row.text(1)), preview: promptText(row.text(2)),
                                              project: workspaces?.compactMap(filePath).first,
                                              modified: indexDate(row.text(4)), parent: nonempty(row.text(5)),
                                              indexURL: db.url)
@@ -220,7 +220,7 @@ enum AntigravityParser {
             }
             switch kind {
             case "USER_INPUT":
-                if let content { append(content, as: .user) }
+                if let prompt = promptText(content) { append(prompt, as: .user) }
             case "PLANNER_RESPONSE":
                 if let thought = nonempty(row["thinking"] as? String) { append(thought, as: .thinking) }
                 if let content { append(content, as: .assistant) }
@@ -257,7 +257,8 @@ enum AntigravityParser {
                     let next = i + 1 < entries.count ? entries[i + 1].last ?? bytes.count : bytes.count
                     let key = prefix + String(step)
                     guard first >= 0, next >= first, next <= bytes.count,
-                          let text = nonempty(String(bytes: bytes[first..<next], encoding: .utf8)),
+                          let raw = String(bytes: bytes[first..<next], encoding: .utf8),
+                          let text = kind == .user ? promptText(raw) : nonempty(raw),
                           seen.insert(key).inserted else { continue }
                     items.append((step, TranscriptItem(id: key, kind: kind, text: text, date: nil)))
                 }
@@ -270,7 +271,27 @@ enum AntigravityParser {
 
     private static func userText(_ payload: Proto) -> String? {
         guard let user = payload.message(19) else { return nil }
-        return nonempty(user.message(3)?.text(1)) ?? nonempty(user.text(2))
+        return promptText(user.message(3)?.text(1)) ?? promptText(user.text(2))
+    }
+
+    /// Exported prompts can include the context Antigravity passes alongside the user's message.
+    private static func promptText(_ raw: String?) -> String? {
+        guard let text = nonempty(raw) else { return nil }
+        let opening = "<USER_REQUEST>"
+        let closing = "</USER_REQUEST>"
+        guard text.hasPrefix(opening) else { return text }
+
+        func removingTrailingBlock(_ name: String, from value: String) -> String? {
+            guard value.hasSuffix("</\(name)>"),
+                  let start = value.range(of: "\n<\(name)>", options: .backwards) else { return nil }
+            return nonempty(String(value[..<start.lowerBound]))
+        }
+
+        let withoutSettings = removingTrailingBlock("USER_SETTINGS_CHANGE", from: text) ?? text
+        guard let wrapped = removingTrailingBlock("ADDITIONAL_METADATA", from: withoutSettings),
+              wrapped.hasSuffix(closing) else { return text }
+
+        return nonempty(String(wrapped.dropFirst(opening.count).dropLast(closing.count)))
     }
 
     private static func modelName(display: String?, config: String?, modelNumber: Int) -> String {
