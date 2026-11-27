@@ -23,6 +23,19 @@ enum StatsRange: String, CaseIterable, Identifiable {
     }
 }
 
+struct UsageModel: Equatable {
+    let agent: Agent
+    let name: String
+
+    var id: String { "\(agent.rawValue):\(name)" }
+
+    func matches(_ session: SessionSummary, since: String?) -> Bool {
+        session.agent == agent && session.usage.keys.contains { key in
+            key.model == name && (since.map { key.day >= $0 } ?? true)
+        }
+    }
+}
+
 struct UsageRow: Identifiable {
     let id: String
     let label: String
@@ -32,6 +45,7 @@ struct UsageRow: Identifiable {
     var usage = TokenUsage()
     var cost = 0.0
     var unpriced = false
+    var model: UsageModel? = nil
 }
 
 struct DailyPoint: Identifiable {
@@ -79,14 +93,14 @@ struct StatsData {
                 sessionUsage += u
                 sessionCost += c ?? 0
 
-                let modelID = "\(s.agent.rawValue):\(key.model)"
-                var row = models[modelID] ?? UsageRow(id: modelID, label: key.model, color: s.agent.color)
+                let model = UsageModel(agent: s.agent, name: key.model)
+                var row = models[model.id] ?? UsageRow(id: model.id, label: model.name, detail: s.agent.label,
+                                                       color: s.agent.color, model: model)
                 row.usage += u
                 row.cost += c ?? 0
                 row.unpriced = c == nil
-                row.detail = s.agent.label
-                models[modelID] = row
-                modelSessions[modelID, default: []].insert(s.id)
+                models[model.id] = row
+                modelSessions[model.id, default: []].insert(s.id)
 
                 if let date = UsageKey.date(forDay: key.day) {
                     let dk = "\(key.day)-\(s.agent.rawValue)"
@@ -146,9 +160,11 @@ struct StatsDashboard: View {
     let title: String
     let source: SourceFilter
     let sessions: [SessionSummary]
+    @Binding var range: StatsRange
+    let selectedModel: UsageModel?
+    let onSelectModel: (UsageModel) -> Void
     let onSelect: (SessionSummary) -> Void
 
-    @AppStorage("statsRange") private var range: StatsRange = .days30
     @AppStorage("statsMetric") private var metric = "cost"
     private let prices = PriceBook.shared
 
@@ -319,9 +335,22 @@ struct StatsDashboard: View {
                     GridRow {
                         HStack(spacing: 6) {
                             Circle().fill(row.color).frame(width: 8, height: 8)
-                            Text(row.label).lineLimit(1)
-                            if let detail = row.detail, detail != row.label, title == "按模型" {
-                                Text(detail).font(.caption).foregroundStyle(.tertiary)
+                            if let model = row.model {
+                                Button { onSelectModel(model) } label: {
+                                    Text(row.label).lineLimit(1)
+                                }
+                                .buttonStyle(.link)
+                                .help(selectedModel == model ? "清除模型篩選" : "睇用過呢個模型嘅對話")
+                                if let detail = row.detail {
+                                    Text(detail).font(.caption).foregroundStyle(.tertiary)
+                                }
+                                if selectedModel == model {
+                                    Image(systemName: "checkmark").font(.caption)
+                                        .foregroundStyle(Color.accentColor)
+                                        .accessibilityHidden(true)
+                                }
+                            } else {
+                                Text(row.label).lineLimit(1)
                             }
                         }
                         if showSessions { Text("\(row.sessions)") }

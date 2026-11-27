@@ -4,8 +4,10 @@ struct SessionListView: View {
     let store: HistoryStore
     let sessions: [SessionSummary]
     let filter: SourceFilter
+    let modelFilterLabel: String?
     @Binding var project: String?
     @Binding var selection: Set<SessionSummary.ID>
+    let onClearModel: () -> Void
     let onDelete: ([SessionSummary]) -> Void
 
     var body: some View {
@@ -13,13 +15,33 @@ struct SessionListView: View {
             projectPicker
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+            if let modelFilterLabel {
+                HStack(spacing: 8) {
+                    Label(modelFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
+                        .lineLimit(1)
+                        .help(modelFilterLabel)
+                    Spacer(minLength: 0)
+                    Button(action: onClearModel) {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .help("清除模型篩選")
+                    .accessibilityLabel("清除模型篩選")
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
             Divider()
 
             if sessions.isEmpty {
                 if store.isLoading && store.sessions.isEmpty {
                     ProgressView("讀取緊…").frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ContentUnavailableView("冇對話", systemImage: "tray", description: Text("試吓轉來源或者清除搜尋"))
+                    ContentUnavailableView("冇對話", systemImage: "tray", description: Text(
+                        modelFilterLabel == nil ? "試吓轉來源或者清除搜尋" : "試吓清除模型篩選或者調整統計日期"
+                    ))
                 }
             } else {
                 List(selection: $selection) {

@@ -119,10 +119,19 @@ struct ContentView: View {
     @State private var pendingDelete: [SessionSummary] = []
     @State private var deleteError: String?
     @State private var query = ""
+    @State private var model: UsageModel?
+    @AppStorage("statsRange") private var statsRange: StatsRange = .days30
     @Environment(\.scenePhase) private var scenePhase
 
-    private var visibleSessions: [SessionSummary] {
+    private var scopedSessions: [SessionSummary] {
         store.filtered(filter ?? .all, project: project, query: query)
+    }
+
+    private var visibleSessions: [SessionSummary] {
+        let sessions = scopedSessions
+        guard let model else { return sessions }
+        let since = statsRange.sinceKey
+        return sessions.filter { model.matches($0, since: since) }
     }
 
     private var selectedSessions: [SessionSummary] {
@@ -164,8 +173,10 @@ struct ContentView: View {
                 store: store,
                 sessions: visibleSessions,
                 filter: filter ?? .all,
+                modelFilterLabel: model.map { "\($0.name) · \($0.agent.label) · \(statsRange.rawValue)" },
                 project: $project,
                 selection: $selection,
+                onClearModel: { model = nil },
                 onDelete: requestDelete
             )
             .searchable(text: $query, placement: .sidebar, prompt: "搜尋標題 / 內容")
@@ -192,8 +203,14 @@ struct ContentView: View {
                     title: (filter ?? .all).title + (project.map { " · \(($0 as NSString).lastPathComponent)" } ?? "")
                         + (query.isEmpty ? "" : " · 搜尋「\(query)」"),
                     source: filter ?? .all,
-                    sessions: visibleSessions,
-                    onSelect: { selection = [$0.id] }
+                    sessions: scopedSessions,
+                    range: $statsRange,
+                    selectedModel: model,
+                    onSelectModel: { model = model == $0 ? nil : $0 },
+                    onSelect: { session in
+                        if let model, !model.matches(session, since: statsRange.sinceKey) { self.model = nil }
+                        selection = [session.id]
+                    }
                 )
             }
         }
@@ -241,6 +258,7 @@ struct ContentView: View {
             if phase == .active { store.reload() }
         }
         .onChange(of: filter) { _, _ in
+            model = nil
             // Drop the project filter if it has no sessions under the new source.
             if let project, !store.projects(for: filter ?? .all).contains(where: { $0.path == project }) {
                 self.project = nil
